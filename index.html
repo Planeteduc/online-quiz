@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="hi">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quiz with Result PDF</title>
+
+    <!-- jsPDF CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #f5f6fa;
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 260px;
+            background: #fff;
+            border-right: 1px solid #ddd;
+            padding: 15px;
+        }
+
+        .question-list {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+
+        .q-number {
+            padding: 8px 0;
+            text-align: center;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #e0e0e0;
+        }
+
+        .answered {
+            background: #4caf50;
+            color: #fff;
+        }
+
+        .not-answered {
+            background: #f44336;
+            color: #fff;
+        }
+
+        .review {
+            background: #9e9e9e;
+            color: #fff;
+        }
+
+        .main {
+            flex: 1;
+            padding: 20px;
+        }
+
+        .question-box {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        #options {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        button {
+            margin-right: 10px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .save {
+            background: #4caf50;
+            color: #fff;
+        }
+
+        .review-btn {
+            background: #9e9e9e;
+            color: #fff;
+        }
+
+        .clear {
+            background: #f44336;
+            color: #fff;
+        }
+
+        .submit {
+            background: #2196f3;
+            color: #fff;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Candidate Form -->
+    <div id="candidateForm"
+        style="padding:30px; max-width:400px; margin:80px auto; background:#fff; border-radius:8px;">
+        <h2>Candidate Details</h2>
+        <input type="text" id="candidateName" placeholder="Enter Name"
+            style="width:100%; padding:10px; margin-bottom:12px;">
+        <input type="text" id="candidateId" placeholder="Enrollment / Aadhaar No"
+            style="width:100%; padding:10px; margin-bottom:12px;">
+        <button onclick="startQuiz()"
+            style="padding:10px 20px; background:#2196f3; color:#fff; border:none; border-radius:5px;">Start
+            Quiz</button>
+    </div>
+
+    <!-- Quiz Container -->
+    <div class="container" id="quizContainer" style="display:none;">
+        <div class="sidebar">
+            <h3>Questions</h3>
+            <div class="question-list" id="questionList"></div>
+        </div>
+        <div class="main">
+            <div id="timer" style="font-size:18px;margin-bottom:15px;color:red;"></div>
+            <div class="question-box">
+                <h2 id="questionText"></h2>
+                <div id="options"></div>
+
+                <div>
+                    <button class="save" onclick="saveAnswer()">Save</button>
+                    <button class="review-btn" onclick="markReview()">Review</button>
+                    <button class="clear" onclick="clearAnswer()">Clear</button>
+                    <button onclick="prevQuestion()">Previous</button>
+                    <button onclick="nextQuestion()">Next</button>
+                </div>
+
+                <button class="submit" onclick="submitQuiz()">Submit & Download PDF</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const questions = [
+            { text: "HTML ka full form kya hai?", options: ["Hyper Text Markup Language", "High Text Machine Language", "Hyper Tool Multi Language", "None"], correct: 0 },
+            { text: "CSS ka use kis liye hota hai?", options: ["Structure", "Styling", "Logic", "Database"], correct: 1 },
+            { text: "JavaScript kis type ki language hai?", options: ["Markup", "Styling", "Programming", "Query"], correct: 2 }
+        ];
+
+        let current = 0;
+        let answers = Array(questions.length).fill(null);
+        let status = Array(questions.length).fill('not-answered');
+        let candidateName = "";
+        let candidateId = "";
+        let timerInterval;
+
+        const qList = document.getElementById("questionList");
+        const qText = document.getElementById("questionText");
+        const optionsDiv = document.getElementById("options");
+        const submitBtn = document.querySelector(".submit");
+
+        // ===== Exam Mode Restrictions =====
+        // Prevent copy, cut, paste, select, right-click, drag
+        document.addEventListener('copy', e => e.preventDefault());
+        document.addEventListener('cut', e => e.preventDefault());
+        document.addEventListener('paste', e => e.preventDefault());
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        document.addEventListener('selectstart', e => e.preventDefault());
+        document.addEventListener('dragstart', e => e.preventDefault());
+
+        // Prevent leaving page / navigating back
+        window.onbeforeunload = function () {
+            return "Quiz is in progress. Leaving will submit automatically.";
+        };
+
+        // Detect tab switch
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                alert("You switched tabs! Quiz will be submitted automatically.");
+                submitQuiz();
+            }
+        });
+
+        // Disable DevTools keys (F12, Ctrl+Shift+I, Ctrl+U, Ctrl+S)
+        document.addEventListener('keydown', function (e) {
+            if (e.keyCode === 123 || // F12
+                (e.ctrlKey && e.shiftKey && e.keyCode === 73) || // Ctrl+Shift+I
+                (e.ctrlKey && e.keyCode === 85) || // Ctrl+U
+                (e.ctrlKey && e.keyCode === 83) // Ctrl+S
+            ) {
+                e.preventDefault();
+                alert("This action is disabled during the quiz.");
+            }
+        });
+
+        // ===== Quiz Functions =====
+
+        // Prevent re-attempt
+        function alreadyTaken(name, id) {
+            const data = localStorage.getItem("quizData");
+            if (!data) return false;
+            const attempts = JSON.parse(data);
+            return attempts.some(a => a.name === name && a.id === id);
+        }
+
+        // Start Quiz
+        function startQuiz() {
+            candidateName = document.getElementById("candidateName").value.trim();
+            candidateId = document.getElementById("candidateId").value.trim();
+            if (!candidateName || !candidateId) { alert("Enter Name & Enrollment/Aadhaar"); return; }
+            if (alreadyTaken(candidateName, candidateId)) { alert("You have already attempted this quiz!"); return; }
+
+            document.getElementById("candidateForm").style.display = "none";
+            document.getElementById("quizContainer").style.display = "flex";
+
+            renderNumbers();
+            loadQuestion(0);
+            startTimer(60 * 60); // 1 hour
+        }
+
+        // Render Question Numbers
+        function renderNumbers() {
+            qList.innerHTML = "";
+            questions.forEach((q, i) => {
+                const d = document.createElement("div");
+                d.className = `q-number ${status[i]}`;
+                d.innerText = i + 1;
+                d.onclick = () => loadQuestion(i);
+                qList.appendChild(d);
+            });
+            checkSubmitVisibility();
+        }
+
+        // Load Question
+        function loadQuestion(i) {
+            current = i;
+            qText.innerText = `Q${i + 1}. ${questions[i].text}`;
+            optionsDiv.innerHTML = "";
+            questions[i].options.forEach((op, idx) => {
+                const label = document.createElement("label");
+                const radio = document.createElement("input");
+                radio.type = "radio"; radio.name = "opt"; radio.value = idx;
+                if (answers[i] === idx) radio.checked = true;
+                label.appendChild(radio); label.append(" " + op);
+                optionsDiv.appendChild(label);
+            });
+            checkSubmitVisibility();
+        }
+
+        // Save Answer & Auto Next
+        function saveAnswer() {
+            const sel = document.querySelector('input[name="opt"]:checked');
+            if (sel) { answers[current] = parseInt(sel.value); status[current] = "answered"; }
+            renderNumbers();
+            if (current < questions.length - 1) nextQuestion();
+        }
+
+        // Mark Review
+        function markReview() { status[current] = "review"; renderNumbers(); }
+
+        // Clear Answer
+        function clearAnswer() { answers[current] = null; status[current] = "not-answered"; loadQuestion(current); renderNumbers(); }
+
+        // Next / Previous
+        function nextQuestion() { if (current < questions.length - 1) loadQuestion(current + 1); }
+        function prevQuestion() { if (current > 0) loadQuestion(current - 1); }
+
+        // Submit Button Logic
+        function checkSubmitVisibility() { submitBtn.style.display = status.includes("review") ? "none" : "inline-block"; }
+        function allAnswered() { return answers.every(ans => ans !== null); }
+
+        // Timer
+        function startTimer(seconds) {
+            let remaining = seconds;
+            const timerDiv = document.getElementById("timer");
+            timerDiv.innerText = formatTime(remaining);
+            timerInterval = setInterval(() => {
+                remaining--;
+                timerDiv.innerText = formatTime(remaining);
+                if (remaining <= 0) { clearInterval(timerInterval); alert("Time is up! Auto submitting."); submitQuiz(); }
+            }, 1000);
+
+            function formatTime(s) {
+                const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+            }
+        }
+
+        // Submit Quiz
+        // Submit Quiz
+        function submitQuiz() {
+            if (!allAnswered()) {
+                alert("You must answer all questions before submitting!");
+                return;
+            }
+
+            let correct = 0, incorrect = 0;
+            questions.forEach((q, i) => {
+                if (answers[i] !== null) {
+                    answers[i] === q.correct ? correct++ : incorrect++;
+                }
+            });
+
+            const { jsPDF } = window.jspdf;
+            const password = "quiz123";
+            let doc = new jsPDF({
+                encryption: {
+                    userPassword: password,
+                    ownerPassword: password,
+                    userPermissions: ["print"]
+                }
+            });
+
+            let y = 10;
+            doc.setFontSize(16);
+            doc.text("Quiz Result Summary", 10, y);
+            y += 12;
+
+            doc.setFontSize(12);
+            doc.text(`Name: ${candidateName}`, 10, y); y += 8;
+            doc.text(`Enrollment / Aadhaar: ${candidateId}`, 10, y); y += 10;
+
+            doc.text(`Total Questions: ${questions.length}`, 10, y); y += 8;
+            doc.text(`Correct Answers: ${correct}`, 10, y); y += 8;
+            doc.text(`Incorrect Answers: ${incorrect}`, 10, y); y += 8;
+
+            doc.text(`PDF Password: ${password}`, 10, y + 5);
+            doc.save("quiz-result.pdf");
+
+            // Store attempt to prevent reattempt
+            const data = localStorage.getItem("quizData");
+            let attempts = data ? JSON.parse(data) : [];
+            attempts.push({ name: candidateName, id: candidateId });
+            localStorage.setItem("quizData", JSON.stringify(attempts));
+
+            clearInterval(timerInterval);
+            alert("Quiz submitted successfully!");
+            location.reload();
+        }
+
+    </script>
+
+
+</body>
+
+</html>
